@@ -1,5 +1,8 @@
 import Config
 
+# Only in tests, remove the complexity from the password hashing algorithm
+config :bcrypt_elixir, :log_rounds, 1
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
@@ -43,9 +46,7 @@ config :tally, Oban, testing: :manual
 
 # Lets Phoenix.Ecto.SQL.Sandbox (wired into the endpoint) share a test's
 # sandbox connection with the separate process a LiveView test spawns
-# for the "connected" mount — without it, any DB call from inside a
+# for the "connected" mount. Without it, any DB call from inside a
 # LiveView's handle_event/handle_info raises DBConnection.OwnershipError,
-# since :manual-mode sandbox ownership doesn't cross processes on its
-# own. (A real gap found the hard way on a previous project — wiring it
-# up from day one here instead.)
+# since :manual-mode sandbox ownership doesn't cross processes on its own.
 config :tally, sql_sandbox: true

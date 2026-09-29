@@ -61,18 +61,13 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
-# The "imports" queue is for CSV-import processing jobs (Phase 2) — kept
-# separate so a large import never delays anything else added to the
-# queue set later.
+# Wired up now; the "imports" queue is used starting Phase 2, which
+# also adds CSV-processing jobs and any plugins/tuning they turn out to
+# need.
 config :tally, Oban,
   engine: Oban.Engines.Basic,
   repo: Tally.Repo,
-  queues: [imports: 5],
-  plugins: [
-    # Prunes Oban's own completed/cancelled job rows so oban_jobs doesn't
-    # grow forever.
-    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}
-  ]
+  queues: [imports: 10]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
