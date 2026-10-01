@@ -1,5 +1,6 @@
 defmodule Tally.FinanceTest do
   use Tally.DataCase, async: true
+  use Oban.Testing, repo: Tally.Repo
 
   import Tally.AccountsFixtures
   import Tally.FinanceFixtures
@@ -293,6 +294,140 @@ defmodule Tally.FinanceTest do
                  match_text: "NETFLIX",
                  category: "Subscriptions"
                })
+    end
+  end
+
+  describe "get_import/2" do
+    test "returns the import when it belongs to the given account" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      assert {:ok, ^import} = Finance.get_import(account, import.id)
+    end
+
+    test "returns :not_found for another account's import" do
+      user = user_fixture()
+      mine = account_fixture(%{name: "Mine"}, user)
+      theirs = account_fixture(%{name: "Theirs"}, user)
+      {:ok, import} = Finance.create_import(user, theirs, %{filename: "jan.csv"})
+
+      assert {:error, :not_found} = Finance.get_import(mine, import.id)
+    end
+
+    test "returns :not_found for a malformed id instead of raising" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      assert {:error, :not_found} = Finance.get_import(account, "not-an-id")
+    end
+  end
+
+  describe "run_import/4" do
+    test "bulk-inserts valid rows and marks the import completed" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      csv = "date,description,amount\n2026-01-15,Coffee,-4.50\n2026-01-16,Paycheck,1200.00\n"
+
+      assert {:ok, updated} = Finance.run_import(user, account, import, csv)
+      assert updated.status == :completed
+      assert updated.rows_total == 2
+      assert updated.rows_imported == 2
+      assert updated.rows_skipped == 0
+      assert updated.rows_errored == 0
+
+      assert [_first, _second] = Finance.list_transactions(account)
+    end
+
+    test "applies the user's category rules to imported transactions" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      _rule = category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      csv = "date,description,amount\n2026-01-15,NETFLIX.COM 8829,-15.99\n"
+
+      assert {:ok, _updated} = Finance.run_import(user, account, import, csv)
+      assert [txn] = Finance.list_transactions(account)
+      assert txn.category == "Subscriptions"
+      assert txn.normalized_merchant == "Netflix.com"
+    end
+
+    test "skips an exact duplicate already on the account instead of erroring the import" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      _existing =
+        transaction_fixture(user, account, %{
+          posted_on: ~D[2026-01-15],
+          description: "Coffee",
+          amount_cents: -450
+        })
+
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      csv = "date,description,amount\n2026-01-15,Coffee,-4.50\n2026-01-16,Lunch,-12.00\n"
+
+      assert {:ok, updated} = Finance.run_import(user, account, import, csv)
+      assert updated.rows_total == 2
+      assert updated.rows_imported == 1
+      assert updated.rows_skipped == 1
+      assert updated.rows_errored == 0
+      assert length(Finance.list_transactions(account)) == 2
+    end
+
+    test "records malformed rows on the import without failing the whole batch" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      csv = "date,description,amount\n2026-01-15,Coffee,-4.50\nnot-a-date,Lunch,-12.00\n"
+
+      assert {:ok, updated} = Finance.run_import(user, account, import, csv)
+      assert updated.rows_imported == 1
+      assert updated.rows_errored == 1
+      assert [%{row: 3}] = updated.error_details
+    end
+
+    test "marks the import failed when the CSV is missing a required column" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      csv = "date,amount\n2026-01-15,-4.50\n"
+
+      assert {:ok, updated} = Finance.run_import(user, account, import, csv)
+      assert updated.status == :failed
+      assert [%{reason: reason}] = updated.error_details
+      assert reason =~ "missing a required column"
+    end
+
+    test "refuses to run an import against another user's account" do
+      owner = user_fixture()
+      other = user_fixture()
+      account = account_fixture(%{}, owner)
+      {:ok, import} = Finance.create_import(owner, account, %{filename: "jan.csv"})
+
+      assert {:error, :not_found} =
+               Finance.run_import(other, account, import, "date,description,amount\n")
+    end
+  end
+
+  describe "process_import_async/4" do
+    test "enqueues an ImportWorker job with the import's details" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      assert {:ok, _job} =
+               Finance.process_import_async(user, account, import, "date,description,amount\n")
+
+      assert_enqueued(
+        worker: Tally.Finance.ImportWorker,
+        args: %{"user_id" => user.id, "account_id" => account.id, "import_id" => import.id}
+      )
     end
   end
 
