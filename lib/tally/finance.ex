@@ -23,6 +23,12 @@ defmodule Tally.Finance do
     |> Repo.insert()
   end
 
+  @doc "Returns a changeset for tracking `account` form changes, without persisting anything."
+  @spec change_account(Account.t(), map()) :: Ecto.Changeset.t()
+  def change_account(%Account{} = account, attrs \\ %{}) do
+    Account.changeset(account, attrs)
+  end
+
   @doc "Fetches an account by id, scoped to `user`."
   @spec get_account(User.t(), term()) :: {:ok, Account.t()} | {:error, :not_found}
   def get_account(%User{} = user, id) do
@@ -92,7 +98,11 @@ defmodule Tally.Finance do
     with {:ok, account} <- get_account(user, account.id) do
       case Importer.process(csv_content, list_category_rules(user)) do
         {:error, :missing_columns} ->
-          fail_import(import, "CSV is missing a required column: date, description, amount")
+          fail_import(
+            account,
+            import,
+            "CSV is missing a required column: date, description, amount"
+          )
 
         result ->
           insert_and_finalize(account, import, result)
@@ -108,6 +118,17 @@ defmodule Tally.Finance do
     %{user_id: user.id, account_id: account.id, import_id: import.id, csv_content: csv_content}
     |> ImportWorker.new()
     |> Oban.insert()
+  end
+
+  @doc """
+  Subscribes the caller to `account`'s events — currently just
+  `{:import_completed, import}`, broadcast once `run_import/4` finishes
+  (success or failure), so a dashboard watching an upload doesn't need
+  to poll.
+  """
+  @spec subscribe_to_account(Account.t()) :: :ok | {:error, term()}
+  def subscribe_to_account(%Account{} = account) do
+    Phoenix.PubSub.subscribe(Tally.PubSub, account_topic(account))
   end
 
   defp insert_and_finalize(account, import, result) do
@@ -139,16 +160,42 @@ defmodule Tally.Finance do
     end)
     |> Repo.transaction()
     |> case do
-      {:ok, %{import: import}} -> {:ok, import}
-      {:error, :import, changeset, _changes} -> {:error, changeset}
+      {:ok, %{import: import}} ->
+        Phoenix.PubSub.broadcast(
+          Tally.PubSub,
+          account_topic(account),
+          {:import_completed, import}
+        )
+
+        {:ok, import}
+
+      {:error, :import, changeset, _changes} ->
+        {:error, changeset}
     end
   end
 
-  defp fail_import(import, reason) do
-    import
-    |> Import.status_changeset(%{status: :failed, error_details: [%{row: 0, reason: reason}]})
-    |> Repo.update()
+  defp fail_import(account, import, reason) do
+    case import
+         |> Import.status_changeset(%{
+           status: :failed,
+           error_details: [%{row: 0, reason: reason}]
+         })
+         |> Repo.update() do
+      {:ok, import} ->
+        Phoenix.PubSub.broadcast(
+          Tally.PubSub,
+          account_topic(account),
+          {:import_completed, import}
+        )
+
+        {:ok, import}
+
+      error ->
+        error
+    end
   end
+
+  defp account_topic(%Account{} = account), do: "account:#{account.id}"
 
   @doc "Adds a transaction to `account`, scoped to `user`."
   @spec create_transaction(User.t(), Account.t(), map()) ::
@@ -175,6 +222,77 @@ defmodule Tally.Finance do
     |> Repo.all()
   end
 
+  @doc """
+  `account`'s running balance: the sum of every transaction posted to
+  it. There's no separate "opening balance" concept — this is exactly
+  as accurate as the transaction history imported so far, which is a
+  known simplification (see the README).
+  """
+  @spec account_balance(Account.t()) :: integer()
+  def account_balance(%Account{} = account) do
+    Transaction
+    |> where([t], t.account_id == ^account.id)
+    |> select([t], sum(t.amount_cents))
+    |> Repo.one()
+    |> Kernel.||(0)
+  end
+
+  @doc """
+  Total spend per category between `from` and `to` (inclusive), most-
+  spent first. Spending only — transactions with a positive
+  `amount_cents` (credits, refunds) are excluded rather than netted
+  against a category, since "how much did I spend on X" is the
+  question this answers. A transaction with no assigned category is
+  grouped under the literal `"Uncategorized"` rather than dropped, so
+  nothing vanishes from the total silently.
+  """
+  @spec spending_by_category(Account.t(), Date.t(), Date.t()) :: [{String.t(), non_neg_integer()}]
+  def spending_by_category(%Account{} = account, %Date{} = from, %Date{} = to) do
+    Transaction
+    |> where([t], t.account_id == ^account.id)
+    |> where([t], t.posted_on >= ^from and t.posted_on <= ^to and t.amount_cents < 0)
+    |> select([t], {t.category, t.amount_cents})
+    |> Repo.all()
+    |> Enum.group_by(fn {category, _amount} -> category || "Uncategorized" end, &elem(&1, 1))
+    |> Enum.map(fn {category, amounts} -> {category, -Enum.sum(amounts)} end)
+    |> Enum.sort_by(fn {_category, spent_cents} -> -spent_cents end)
+  end
+
+  @doc """
+  Total spend per calendar month for `account`'s trailing `months`
+  months (default 6), oldest first, including months with zero spend —
+  a trend chart shouldn't silently skip a quiet month. Same spending-
+  only convention as `spending_by_category/3`.
+  """
+  @spec monthly_totals(Account.t(), pos_integer()) :: [{Date.t(), non_neg_integer()}]
+  def monthly_totals(%Account{} = account, months \\ 6) when is_integer(months) and months > 0 do
+    today = Date.utc_today()
+    current_month = Date.new!(today.year, today.month, 1)
+    start_month = shift_months(current_month, -(months - 1))
+
+    spending_by_month =
+      Transaction
+      |> where([t], t.account_id == ^account.id)
+      |> where([t], t.posted_on >= ^start_month and t.amount_cents < 0)
+      |> select([t], {t.posted_on, t.amount_cents})
+      |> Repo.all()
+      |> Enum.group_by(
+        fn {posted_on, _amount} -> Date.new!(posted_on.year, posted_on.month, 1) end,
+        &elem(&1, 1)
+      )
+      |> Map.new(fn {month, amounts} -> {month, -Enum.sum(amounts)} end)
+
+    for n <- (months - 1)..0//-1 do
+      month = shift_months(current_month, -n)
+      {month, Map.get(spending_by_month, month, 0)}
+    end
+  end
+
+  defp shift_months(%Date{year: year, month: month} = date, offset) do
+    zero_indexed_total = year * 12 + (month - 1) + offset
+    %{date | year: div(zero_indexed_total, 12), month: rem(zero_indexed_total, 12) + 1}
+  end
+
   @doc "Creates a category rule owned by `user`."
   @spec create_category_rule(User.t(), map()) ::
           {:ok, CategoryRule.t()} | {:error, Ecto.Changeset.t()}
@@ -182,6 +300,12 @@ defmodule Tally.Finance do
     %CategoryRule{user_id: user.id}
     |> CategoryRule.changeset(attrs)
     |> Repo.insert()
+  end
+
+  @doc "Returns a changeset for tracking `category_rule` form changes, without persisting anything."
+  @spec change_category_rule(CategoryRule.t(), map()) :: Ecto.Changeset.t()
+  def change_category_rule(%CategoryRule{} = category_rule, attrs \\ %{}) do
+    CategoryRule.changeset(category_rule, attrs)
   end
 
   @doc "Lists `user`'s category rules."

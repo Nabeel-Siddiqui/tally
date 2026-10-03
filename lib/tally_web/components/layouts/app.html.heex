@@ -1,26 +1,33 @@
 <header class="px-4 sm:px-6 lg:px-8">
   <div class="flex items-center justify-between border-b border-zinc-100 py-3 text-sm">
     <div class="flex items-center gap-4">
-      <a href="/">
-        <img src={~p"/images/logo.svg"} width="36" />
+      <a
+        href={if @current_user, do: ~p"/accounts", else: ~p"/"}
+        class="font-semibold text-zinc-900"
+      >
+        Tally
       </a>
-      <p class="bg-brand/5 text-brand rounded-full px-2 font-medium leading-6">
-        v{Application.spec(:phoenix, :vsn)}
-      </p>
+      <%= if @current_user do %>
+        <a href={~p"/accounts"} class="hover:text-zinc-700">Accounts</a>
+        <a href={~p"/rules"} class="hover:text-zinc-700">Category rules</a>
+      <% end %>
     </div>
     <div class="flex items-center gap-4 font-semibold leading-6 text-zinc-900">
-      <a href="https://twitter.com/elixirphoenix" class="hover:text-zinc-700">
-        @elixirphoenix
-      </a>
-      <a href="https://github.com/phoenixframework/phoenix" class="hover:text-zinc-700">
-        GitHub
-      </a>
-      <a
-        href="https://hexdocs.pm/phoenix/overview.html"
-        class="rounded-lg bg-zinc-100 px-2 py-1 hover:bg-zinc-200/80"
-      >
-        Get Started <span aria-hidden="true">&rarr;</span>
-      </a>
+      <%= if @current_user do %>
+        <span class="text-zinc-600">{@current_user.email}</span>
+        <a href={~p"/users/settings"} class="hover:text-zinc-700">Settings</a>
+        <.link href={~p"/users/log_out"} method="delete" class="hover:text-zinc-700">
+          Log out
+        </.link>
+      <% else %>
+        <a href={~p"/users/log_in"} class="hover:text-zinc-700">Log in</a>
+        <a
+          href={~p"/users/register"}
+          class="rounded-lg bg-zinc-100 px-2 py-1 hover:bg-zinc-200/80"
+        >
+          Register
+        </a>
+      <% end %>
     </div>
   </div>
 </header>

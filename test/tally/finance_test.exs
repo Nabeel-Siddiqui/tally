@@ -431,6 +431,156 @@ defmodule Tally.FinanceTest do
     end
   end
 
+  describe "account_balance/1" do
+    test "sums every transaction on the account" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      _spend = transaction_fixture(user, account, %{description: "Coffee", amount_cents: -450})
+      _credit = transaction_fixture(user, account, %{description: "Refund", amount_cents: 1000})
+
+      assert Finance.account_balance(account) == 550
+    end
+
+    test "is 0 for an account with no transactions" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      assert Finance.account_balance(account) == 0
+    end
+  end
+
+  describe "spending_by_category/3" do
+    test "totals spend per category, most-spent first, within the date range" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      transaction_fixture(user, account, %{
+        description: "Netflix",
+        amount_cents: -1500,
+        category: "Subscriptions",
+        posted_on: ~D[2026-02-10]
+      })
+
+      transaction_fixture(user, account, %{
+        description: "Spotify",
+        amount_cents: -1000,
+        category: "Subscriptions",
+        posted_on: ~D[2026-02-11]
+      })
+
+      transaction_fixture(user, account, %{
+        description: "Groceries",
+        amount_cents: -5000,
+        category: "Food",
+        posted_on: ~D[2026-02-12]
+      })
+
+      assert Finance.spending_by_category(account, ~D[2026-02-01], ~D[2026-02-28]) == [
+               {"Food", 5000},
+               {"Subscriptions", 2500}
+             ]
+    end
+
+    test "groups uncategorized transactions together instead of dropping them" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      transaction_fixture(user, account, %{
+        description: "Mystery charge",
+        amount_cents: -200,
+        posted_on: ~D[2026-02-10]
+      })
+
+      assert Finance.spending_by_category(account, ~D[2026-02-01], ~D[2026-02-28]) == [
+               {"Uncategorized", 200}
+             ]
+    end
+
+    test "excludes credits/refunds and transactions outside the range" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      transaction_fixture(user, account, %{
+        description: "Refund",
+        amount_cents: 500,
+        category: "Food",
+        posted_on: ~D[2026-02-10]
+      })
+
+      transaction_fixture(user, account, %{
+        description: "Last month",
+        amount_cents: -500,
+        category: "Food",
+        posted_on: ~D[2026-01-15]
+      })
+
+      assert Finance.spending_by_category(account, ~D[2026-02-01], ~D[2026-02-28]) == []
+    end
+  end
+
+  describe "monthly_totals/2" do
+    test "returns the trailing N months oldest first, including zero-spend months" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      today = Date.utc_today()
+      this_month = Date.new!(today.year, today.month, 1)
+
+      transaction_fixture(user, account, %{
+        description: "Rent",
+        amount_cents: -150_000,
+        posted_on: this_month
+      })
+
+      result = Finance.monthly_totals(account, 3)
+
+      assert length(result) == 3
+      assert List.last(result) == {this_month, 150_000}
+      assert Enum.all?(result, fn {month, _total} -> %Date{day: 1} = month end)
+    end
+
+    test "defaults to 6 months" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      assert length(Finance.monthly_totals(account)) == 6
+    end
+  end
+
+  describe "subscribe_to_account/1 and import completion broadcasts" do
+    test "a subscriber receives {:import_completed, import} when run_import/4 finishes" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      :ok = Finance.subscribe_to_account(account)
+
+      assert {:ok, completed} =
+               Finance.run_import(
+                 user,
+                 account,
+                 import,
+                 "date,description,amount\n2026-01-15,Coffee,-4.50\n"
+               )
+
+      assert_receive {:import_completed, ^completed}
+    end
+
+    test "a subscriber is also notified when the import fails" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+      {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
+
+      :ok = Finance.subscribe_to_account(account)
+
+      assert {:ok, failed} =
+               Finance.run_import(user, account, import, "date,amount\n2026-01-15,-4.50\n")
+
+      assert_receive {:import_completed, ^failed}
+      assert failed.status == :failed
+    end
+  end
+
   describe "list_category_rules/1" do
     test "lists only the user's own rules" do
       user = user_fixture()

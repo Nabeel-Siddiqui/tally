@@ -68,6 +68,13 @@ defmodule TallyWeb.Router do
       on_mount: [{TallyWeb.UserAuth, :ensure_authenticated}] do
       live "/users/settings", UserSettingsLive, :edit
       live "/users/settings/confirm_email/:token", UserSettingsLive, :confirm_email
+
+      live "/accounts", AccountLive.Index, :index
+      live "/accounts/new", AccountLive.Index, :new
+      live "/accounts/:id", AccountLive.Show, :show
+
+      live "/rules", CategoryRuleLive.Index, :index
+      live "/rules/new", CategoryRuleLive.Index, :new
     end
   end
 
