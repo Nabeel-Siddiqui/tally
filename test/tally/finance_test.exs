@@ -8,27 +8,27 @@ defmodule Tally.FinanceTest do
   alias Tally.Finance
   alias Tally.Finance.Transaction
 
-  describe "create_account/2" do
-    test "creates an account owned by the user" do
-      user = user_fixture()
+  setup do
+    user = user_fixture()
+    account = account_fixture(%{}, user)
+    %{user: user, account: account}
+  end
 
+  describe "create_account/2" do
+    test "creates an account owned by the user", %{user: user} do
       assert {:ok, account} = Finance.create_account(user, %{name: "Checking", type: :checking})
       assert account.name == "Checking"
       assert account.type == :checking
       assert account.user_id == user.id
     end
 
-    test "requires a name and a type" do
-      user = user_fixture()
-
+    test "requires a name and a type", %{user: user} do
       assert {:error, changeset} = Finance.create_account(user, %{})
       assert "can't be blank" in errors_on(changeset).name
       assert "can't be blank" in errors_on(changeset).type
     end
 
-    test "rejects a type outside checking/credit_card" do
-      user = user_fixture()
-
+    test "rejects a type outside checking/credit_card", %{user: user} do
       assert {:error, changeset} =
                Finance.create_account(user, %{name: "Checking", type: :savings})
 
@@ -37,10 +37,7 @@ defmodule Tally.FinanceTest do
   end
 
   describe "get_account/2" do
-    test "returns the account when owned by the user" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "returns the account when owned by the user", %{user: user, account: account} do
       assert {:ok, ^account} = Finance.get_account(user, account.id)
     end
 
@@ -52,9 +49,7 @@ defmodule Tally.FinanceTest do
       assert {:error, :not_found} = Finance.get_account(other, account.id)
     end
 
-    test "returns :not_found for a malformed id instead of raising" do
-      user = user_fixture()
-
+    test "returns :not_found for a malformed id instead of raising", %{user: user} do
       assert {:error, :not_found} = Finance.get_account(user, "not-an-id")
     end
   end
@@ -73,8 +68,7 @@ defmodule Tally.FinanceTest do
   end
 
   describe "update_account/3" do
-    test "updates an owned account" do
-      user = user_fixture()
+    test "updates an owned account", %{user: user} do
       account = account_fixture(%{name: "Old name"}, user)
 
       assert {:ok, updated} = Finance.update_account(user, account, %{name: "New name"})
@@ -91,10 +85,7 @@ defmodule Tally.FinanceTest do
   end
 
   describe "create_import/3" do
-    test "creates an import for an owned account" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "creates an import for an owned account", %{user: user, account: account} do
       assert {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
       assert import.filename == "jan.csv"
       assert import.status == :pending
@@ -111,10 +102,10 @@ defmodule Tally.FinanceTest do
   end
 
   describe "create_transaction/3 — validations and money handling" do
-    test "creates a transaction with a negative amount for spending" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "creates a transaction with a negative amount for spending", %{
+      user: user,
+      account: account
+    } do
       assert {:ok, txn} =
                Finance.create_transaction(user, account, %{
                  posted_on: ~D[2026-02-01],
@@ -126,10 +117,10 @@ defmodule Tally.FinanceTest do
       assert is_integer(txn.amount_cents)
     end
 
-    test "creates a transaction with a positive amount for a credit" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "creates a transaction with a positive amount for a credit", %{
+      user: user,
+      account: account
+    } do
       assert {:ok, txn} =
                Finance.create_transaction(user, account, %{
                  posted_on: ~D[2026-02-01],
@@ -140,10 +131,7 @@ defmodule Tally.FinanceTest do
       assert txn.amount_cents == 1200
     end
 
-    test "requires posted_on, description, and amount_cents" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "requires posted_on, description, and amount_cents", %{user: user, account: account} do
       assert {:error, changeset} = Finance.create_transaction(user, account, %{})
       errors = errors_on(changeset)
       assert "can't be blank" in errors.posted_on
@@ -162,10 +150,10 @@ defmodule Tally.FinanceTest do
   end
 
   describe "create_transaction/3 — duplicate prevention" do
-    test "computes the same fingerprint automatically, without the caller providing one" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "computes the same fingerprint automatically, without the caller providing one", %{
+      user: user,
+      account: account
+    } do
       {:ok, txn} =
         Finance.create_transaction(
           user,
@@ -181,9 +169,10 @@ defmodule Tally.FinanceTest do
                Transaction.fingerprint(~D[2026-01-15], -450, "COFFEE SHOP")
     end
 
-    test "rejects an exact duplicate on the same account (re-uploaded overlapping statement)" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "rejects an exact duplicate on the same account (re-uploaded overlapping statement)", %{
+      user: user,
+      account: account
+    } do
       attrs = valid_transaction_attributes()
 
       assert {:ok, _first} = Finance.create_transaction(user, account, attrs)
@@ -192,8 +181,7 @@ defmodule Tally.FinanceTest do
       assert "has already been taken" in errors_on(changeset).fingerprint
     end
 
-    test "the same transaction on a different account is not a duplicate" do
-      user = user_fixture()
+    test "the same transaction on a different account is not a duplicate", %{user: user} do
       checking = account_fixture(%{name: "Checking"}, user)
       credit = account_fixture(%{name: "Credit"}, user)
       attrs = valid_transaction_attributes()
@@ -202,10 +190,10 @@ defmodule Tally.FinanceTest do
       assert {:ok, _} = Finance.create_transaction(user, credit, attrs)
     end
 
-    test "a different amount on the same date/description is not treated as a duplicate" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "a different amount on the same date/description is not treated as a duplicate", %{
+      user: user,
+      account: account
+    } do
       assert {:ok, _} =
                Finance.create_transaction(
                  user,
@@ -223,18 +211,14 @@ defmodule Tally.FinanceTest do
   end
 
   describe "list_transactions/1" do
-    test "lists an account's transactions, newest first" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "lists an account's transactions, newest first", %{user: user, account: account} do
       older = transaction_fixture(user, account, %{posted_on: ~D[2026-01-01]})
       newer = transaction_fixture(user, account, %{posted_on: ~D[2026-01-10]})
 
       assert Finance.list_transactions(account) |> Enum.map(& &1.id) == [newer.id, older.id]
     end
 
-    test "doesn't include another account's transactions" do
-      user = user_fixture()
+    test "doesn't include another account's transactions", %{user: user} do
       mine = account_fixture(%{name: "Mine"}, user)
       theirs = account_fixture(%{name: "Theirs"}, user)
 
@@ -246,9 +230,7 @@ defmodule Tally.FinanceTest do
   end
 
   describe "create_category_rule/2" do
-    test "creates a rule owned by the user" do
-      user = user_fixture()
-
+    test "creates a rule owned by the user", %{user: user} do
       assert {:ok, rule} =
                Finance.create_category_rule(user, %{
                  match_text: "NETFLIX",
@@ -259,9 +241,7 @@ defmodule Tally.FinanceTest do
       assert rule.category == "Subscriptions"
     end
 
-    test "trims match_text" do
-      user = user_fixture()
-
+    test "trims match_text", %{user: user} do
       assert {:ok, rule} =
                Finance.create_category_rule(user, %{
                  match_text: "  NETFLIX  ",
@@ -271,8 +251,7 @@ defmodule Tally.FinanceTest do
       assert rule.match_text == "NETFLIX"
     end
 
-    test "rejects a second rule with the same match_text for the same user" do
-      user = user_fixture()
+    test "rejects a second rule with the same match_text for the same user", %{user: user} do
       _first = category_rule_fixture(user, %{match_text: "NETFLIX"})
 
       assert {:error, changeset} =
@@ -298,16 +277,16 @@ defmodule Tally.FinanceTest do
   end
 
   describe "get_import/2" do
-    test "returns the import when it belongs to the given account" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "returns the import when it belongs to the given account", %{
+      user: user,
+      account: account
+    } do
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
       assert {:ok, ^import} = Finance.get_import(account, import.id)
     end
 
-    test "returns :not_found for another account's import" do
-      user = user_fixture()
+    test "returns :not_found for another account's import", %{user: user} do
       mine = account_fixture(%{name: "Mine"}, user)
       theirs = account_fixture(%{name: "Theirs"}, user)
       {:ok, import} = Finance.create_import(user, theirs, %{filename: "jan.csv"})
@@ -315,18 +294,16 @@ defmodule Tally.FinanceTest do
       assert {:error, :not_found} = Finance.get_import(mine, import.id)
     end
 
-    test "returns :not_found for a malformed id instead of raising" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "returns :not_found for a malformed id instead of raising", %{account: account} do
       assert {:error, :not_found} = Finance.get_import(account, "not-an-id")
     end
   end
 
   describe "run_import/4" do
-    test "bulk-inserts valid rows and marks the import completed" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "bulk-inserts valid rows and marks the import completed", %{
+      user: user,
+      account: account
+    } do
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
       csv = "date,description,amount\n2026-01-15,Coffee,-4.50\n2026-01-16,Paycheck,1200.00\n"
@@ -341,9 +318,10 @@ defmodule Tally.FinanceTest do
       assert [_first, _second] = Finance.list_transactions(account)
     end
 
-    test "applies the user's category rules to imported transactions" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "applies the user's category rules to imported transactions", %{
+      user: user,
+      account: account
+    } do
       _rule = category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
@@ -355,10 +333,10 @@ defmodule Tally.FinanceTest do
       assert txn.normalized_merchant == "Netflix.com"
     end
 
-    test "skips an exact duplicate already on the account instead of erroring the import" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "skips an exact duplicate already on the account instead of erroring the import", %{
+      user: user,
+      account: account
+    } do
       _existing =
         transaction_fixture(user, account, %{
           posted_on: ~D[2026-01-15],
@@ -378,9 +356,10 @@ defmodule Tally.FinanceTest do
       assert length(Finance.list_transactions(account)) == 2
     end
 
-    test "records malformed rows on the import without failing the whole batch" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "records malformed rows on the import without failing the whole batch", %{
+      user: user,
+      account: account
+    } do
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
       csv = "date,description,amount\n2026-01-15,Coffee,-4.50\nnot-a-date,Lunch,-12.00\n"
@@ -391,9 +370,10 @@ defmodule Tally.FinanceTest do
       assert [%{row: 3}] = updated.error_details
     end
 
-    test "marks the import failed when the CSV is missing a required column" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "marks the import failed when the CSV is missing a required column", %{
+      user: user,
+      account: account
+    } do
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
       csv = "date,amount\n2026-01-15,-4.50\n"
@@ -416,9 +396,10 @@ defmodule Tally.FinanceTest do
   end
 
   describe "process_import_async/4" do
-    test "enqueues an ImportWorker job with the import's details" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "enqueues an ImportWorker job with the import's details", %{
+      user: user,
+      account: account
+    } do
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
       assert {:ok, _job} =
@@ -432,28 +413,23 @@ defmodule Tally.FinanceTest do
   end
 
   describe "account_balance/1" do
-    test "sums every transaction on the account" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "sums every transaction on the account", %{user: user, account: account} do
       _spend = transaction_fixture(user, account, %{description: "Coffee", amount_cents: -450})
       _credit = transaction_fixture(user, account, %{description: "Refund", amount_cents: 1000})
 
       assert Finance.account_balance(account) == 550
     end
 
-    test "is 0 for an account with no transactions" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "is 0 for an account with no transactions", %{account: account} do
       assert Finance.account_balance(account) == 0
     end
   end
 
   describe "spending_by_category/3" do
-    test "totals spend per category, most-spent first, within the date range" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "totals spend per category, most-spent first, within the date range", %{
+      user: user,
+      account: account
+    } do
       transaction_fixture(user, account, %{
         description: "Netflix",
         amount_cents: -1500,
@@ -481,10 +457,10 @@ defmodule Tally.FinanceTest do
              ]
     end
 
-    test "groups uncategorized transactions together instead of dropping them" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "groups uncategorized transactions together instead of dropping them", %{
+      user: user,
+      account: account
+    } do
       transaction_fixture(user, account, %{
         description: "Mystery charge",
         amount_cents: -200,
@@ -496,10 +472,10 @@ defmodule Tally.FinanceTest do
              ]
     end
 
-    test "excludes credits/refunds and transactions outside the range" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "excludes credits/refunds and transactions outside the range", %{
+      user: user,
+      account: account
+    } do
       transaction_fixture(user, account, %{
         description: "Refund",
         amount_cents: 500,
@@ -519,10 +495,10 @@ defmodule Tally.FinanceTest do
   end
 
   describe "monthly_totals/2" do
-    test "returns the trailing N months oldest first, including zero-spend months" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "returns the trailing N months oldest first, including zero-spend months", %{
+      user: user,
+      account: account
+    } do
       today = Date.utc_today()
       this_month = Date.new!(today.year, today.month, 1)
 
@@ -539,18 +515,16 @@ defmodule Tally.FinanceTest do
       assert Enum.all?(result, fn {month, _total} -> %Date{day: 1} = month end)
     end
 
-    test "defaults to 6 months" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
-
+    test "defaults to 6 months", %{account: account} do
       assert length(Finance.monthly_totals(account)) == 6
     end
   end
 
   describe "subscribe_to_account/1 and import completion broadcasts" do
-    test "a subscriber receives {:import_completed, import} when run_import/4 finishes" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "a subscriber receives {:import_completed, import} when run_import/4 finishes", %{
+      user: user,
+      account: account
+    } do
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
       :ok = Finance.subscribe_to_account(account)
@@ -566,9 +540,10 @@ defmodule Tally.FinanceTest do
       assert_receive {:import_completed, ^completed}
     end
 
-    test "a subscriber is also notified when the import fails" do
-      user = user_fixture()
-      account = account_fixture(%{}, user)
+    test "a subscriber is also notified when the import fails", %{
+      user: user,
+      account: account
+    } do
       {:ok, import} = Finance.create_import(user, account, %{filename: "jan.csv"})
 
       :ok = Finance.subscribe_to_account(account)

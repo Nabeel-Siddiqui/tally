@@ -48,11 +48,6 @@ defmodule Tally.Finance.Transaction do
     |> unique_constraint(:fingerprint, name: :transactions_account_id_fingerprint_index)
   end
 
-  @doc false
-  def category_changeset(transaction, category) do
-    change(transaction, category: category)
-  end
-
   defp put_fingerprint(changeset) do
     with posted_on when not is_nil(posted_on) <- get_field(changeset, :posted_on),
          amount_cents when not is_nil(amount_cents) <- get_field(changeset, :amount_cents),

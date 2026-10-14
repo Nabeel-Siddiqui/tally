@@ -79,7 +79,7 @@ defmodule TallyWeb.AccountLive.Show do
         <div class="mt-1 h-3 rounded bg-zinc-100">
           <div
             class="h-3 rounded bg-zinc-900"
-            style={"width: #{category_bar_width(cents, @category_breakdown)}%"}
+            style={"width: #{bar_width(cents, @category_breakdown)}%"}
           />
         </div>
       </div>
@@ -96,10 +96,7 @@ defmodule TallyWeb.AccountLive.Show do
           <span class="font-semibold">{TallyWeb.Money.format(-cents)}</span>
         </div>
         <div class="mt-1 h-3 rounded bg-zinc-100">
-          <div
-            class="h-3 rounded bg-zinc-900"
-            style={"width: #{trend_bar_width(cents, @monthly_trend)}%"}
-          />
+          <div class="h-3 rounded bg-zinc-900" style={"width: #{bar_width(cents, @monthly_trend)}%"} />
         </div>
       </div>
     </div>
@@ -141,10 +138,12 @@ defmodule TallyWeb.AccountLive.Show do
 
   @impl true
   def handle_info({:import_completed, import}, socket) do
+    {kind, message} = import_flash(import)
+
     {:noreply,
      socket
      |> assign(:active_import, import)
-     |> put_flash(import_flash_kind(import), import_flash_message(import))
+     |> put_flash(kind, message)
      |> load_dashboard_data()}
   end
 
@@ -179,32 +178,27 @@ defmodule TallyWeb.AccountLive.Show do
     |> stream(:transactions, transactions, reset: true)
   end
 
-  defp import_flash_kind(%{status: :completed}), do: :info
-  defp import_flash_kind(%{status: :failed}), do: :error
+  defp import_flash(%{status: :completed} = import) do
+    message =
+      "Import finished: #{import.rows_imported} added, #{import.rows_skipped} duplicate(s) skipped, " <>
+        "#{import.rows_errored} row(s) had errors."
 
-  defp import_flash_message(%{status: :completed} = import) do
-    "Import finished: #{import.rows_imported} added, #{import.rows_skipped} duplicate(s) skipped, " <>
-      "#{import.rows_errored} row(s) had errors."
+    {:info, message}
   end
 
-  defp import_flash_message(%{status: :failed} = import) do
+  defp import_flash(%{status: :failed} = import) do
     reason =
       case import.error_details do
         [%{reason: reason} | _] -> reason
         _ -> "unknown reason"
       end
 
-    "Import failed: #{reason}"
+    {:error, "Import failed: #{reason}"}
   end
 
-  defp category_bar_width(cents, breakdown) do
-    max = breakdown |> Enum.map(&elem(&1, 1)) |> Enum.max()
-    if max == 0, do: 0, else: round(cents / max * 100)
-  end
-
-  defp trend_bar_width(cents, trend) do
-    max = trend |> Enum.map(&elem(&1, 1)) |> Enum.max()
-    if max == 0, do: 0, else: round(cents / max * 100)
+  defp bar_width(value, series) do
+    max = series |> Enum.map(&elem(&1, 1)) |> Enum.max()
+    if max == 0, do: 0, else: round(value / max * 100)
   end
 
   defp account_type_label(:checking), do: "Checking"
