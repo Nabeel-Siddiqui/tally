@@ -146,17 +146,10 @@ defmodule Tally.Finance.Importer do
 
   defp put_category(attrs, category_rules) do
     merchant = normalize_merchant(attrs.description)
-    downcased_merchant = String.downcase(merchant)
-
-    category =
-      Enum.find_value(category_rules, fn rule ->
-        if String.contains?(downcased_merchant, String.downcase(rule.match_text)),
-          do: rule.category
-      end)
 
     attrs
     |> Map.put(:normalized_merchant, merchant)
-    |> Map.put(:category, category)
+    |> Map.put(:category, CategoryRule.match(category_rules, merchant))
   end
 
   @doc """

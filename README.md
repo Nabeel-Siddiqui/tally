@@ -20,20 +20,23 @@ skills.
 - Bad rows don't sink the import. Each malformed row is reported with its
   line number, and the rest of the file still imports.
 - Category rules: "any merchant containing `NETFLIX` is Subscriptions."
-  Rules apply to every import from then on.
+  Rules apply to every import from then on — and, on demand, to every
+  transaction already imported, so adding a rule today can recategorize
+  last month's history too.
 - A dashboard per account showing this month's spending by category and
   the trailing six months. It updates live when a background import
   finishes, with no page reload.
 
 ## Architecture decisions
 
-Three of the less-obvious calls are written up in
+Four of the less-obvious calls are written up in
 [`docs/decisions/`](docs/decisions/), each with the alternative considered
 and why it lost:
 
 1. [Money is integer cents, never floats](docs/decisions/0001-money-as-integer-cents.md)
 2. [Duplicate transactions are rejected by a database index, not by application code](docs/decisions/0002-fingerprint-dedupe.md)
 3. [Imports run as background jobs, with the CSV carried in the job](docs/decisions/0003-imports-as-oban-jobs.md)
+4. [Recategorizing existing transactions batches updates by outcome, not by row](docs/decisions/0004-recategorization-batches-by-outcome.md)
 
 The import flow, end to end:
 
@@ -79,7 +82,7 @@ first load.
 To check the whole thing end to end:
 
 ```bash
-mix test                # 222 tests, no network calls
+mix test                # 236 tests, no network calls
 mix credo --strict
 mix dialyzer
 ```
@@ -108,7 +111,8 @@ for spending.
   remove the fixed-format requirement.
 - **Rule precedence.** Rules currently match in alphabetical order by
   pattern, and the first match wins. Explicit priorities would make
-  overlapping rules predictable.
-- **Recategorizing history.** New rules only apply to future imports.
-  Reapplying rules to existing transactions is a small job, and a
-  natural next step.
+  overlapping rules predictable — and `CategoryRule.match/2` being the
+  one place matching happens (see
+  [ADR 4](docs/decisions/0004-recategorization-batches-by-outcome.md))
+  means this only has to change in one place to affect both new
+  imports and a recategorization run the same way.

@@ -22,6 +22,44 @@ defmodule TallyWeb.CategoryRuleLive.IndexTest do
       assert html =~ "No rules yet"
     end
 
+    test "hides the reapply button when there are no rules yet", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/rules")
+
+      refute html =~ "Reapply to existing transactions"
+    end
+
+    test "reapplying rules recategorizes existing transactions and flashes a count", %{
+      conn: conn,
+      user: user
+    } do
+      account = account_fixture(%{}, user)
+
+      transaction_fixture(user, account, %{
+        normalized_merchant: "Netflix",
+        category: nil
+      })
+
+      category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
+
+      {:ok, view, _html} = live(conn, ~p"/rules")
+
+      html =
+        view |> element("button", "Reapply to existing transactions") |> render_click()
+
+      assert html =~ "Recategorized 1 transaction."
+    end
+
+    test "reapplying with nothing to change reports 0", %{conn: conn, user: user} do
+      category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
+
+      {:ok, view, _html} = live(conn, ~p"/rules")
+
+      html =
+        view |> element("button", "Reapply to existing transactions") |> render_click()
+
+      assert html =~ "No transactions needed recategorizing"
+    end
+
     test "doesn't show another user's rules", %{conn: conn} do
       other = Tally.AccountsFixtures.user_fixture()
       category_rule_fixture(other, %{match_text: "SPOTIFY"})

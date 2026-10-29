@@ -28,8 +28,19 @@ defmodule TallyWeb.CategoryRuleLive.Index do
     ~H"""
     <.header>
       Category rules
-      <:subtitle>Standing instructions applied to every future import.</:subtitle>
+      <:subtitle>
+        Standing instructions applied to every future import — and, on demand, to
+        every transaction you've already imported.
+      </:subtitle>
       <:actions>
+        <.button
+          :if={@category_rules != []}
+          phx-click="recategorize"
+          phx-disable-with="Reapplying..."
+          data-confirm="Reapply these rules to every transaction you've already imported?"
+        >
+          Reapply to existing transactions
+        </.button>
         <.link patch={~p"/rules/new"}>
           <.button>New rule</.button>
         </.link>
@@ -63,5 +74,19 @@ defmodule TallyWeb.CategoryRuleLive.Index do
   def handle_info({TallyWeb.CategoryRuleLive.FormComponent, {:saved, _rule}}, socket) do
     {:noreply,
      assign(socket, :category_rules, Finance.list_category_rules(socket.assigns.current_user))}
+  end
+
+  @impl true
+  def handle_event("recategorize", _params, socket) do
+    {:ok, count} = Finance.recategorize_transactions(socket.assigns.current_user)
+
+    message =
+      case count do
+        0 -> "No transactions needed recategorizing — everything already matched."
+        1 -> "Recategorized 1 transaction."
+        n -> "Recategorized #{n} transactions."
+      end
+
+    {:noreply, put_flash(socket, :info, message)}
   end
 end

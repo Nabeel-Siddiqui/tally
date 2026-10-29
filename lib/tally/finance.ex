@@ -317,6 +317,46 @@ defmodule Tally.Finance do
     |> Repo.all()
   end
 
+  @doc """
+  Re-applies `user`'s current category rules to every transaction
+  they've ever imported, across every account — not just future
+  imports (a rule only ever applied at import time before this).
+
+  Each transaction's category is recomputed the same way
+  `Importer` computes it for a new one (`CategoryRule.match/2`,
+  against the transaction's already-stored `normalized_merchant` —
+  no need to re-parse the original CSV row). Only rows whose category
+  actually changes are written, batched into one `UPDATE` per
+  resulting category rather than one per transaction, since many
+  transactions typically land on the same new category.
+
+  Returns the number of transactions whose category changed.
+  """
+  @spec recategorize_transactions(User.t()) :: {:ok, non_neg_integer()}
+  def recategorize_transactions(%User{} = user) do
+    rules = list_category_rules(user)
+
+    Transaction
+    |> join(:inner, [t], a in Account, on: t.account_id == a.id)
+    |> where([t, a], a.user_id == ^user.id)
+    |> select([t], {t.id, t.normalized_merchant, t.category})
+    |> Repo.all()
+    |> Enum.map(fn {id, normalized_merchant, current_category} ->
+      {id, current_category, CategoryRule.match(rules, normalized_merchant)}
+    end)
+    |> Enum.reject(fn {_id, current, new} -> current == new end)
+    |> Enum.group_by(fn {_id, _current, new} -> new end, fn {id, _current, _new} -> id end)
+    |> Enum.reduce(0, fn {new_category, ids}, total ->
+      {count, _} =
+        Transaction
+        |> where([t], t.id in ^ids)
+        |> Repo.update_all(set: [category: new_category])
+
+      total + count
+    end)
+    |> then(&{:ok, &1})
+  end
+
   defp cast_id(id) do
     case Integer.parse(to_string(id)) do
       {int_id, ""} -> {:ok, int_id}

@@ -568,6 +568,104 @@ defmodule Tally.FinanceTest do
     end
   end
 
+  describe "recategorize_transactions/1" do
+    test "applies a new rule to a transaction imported before the rule existed" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      txn =
+        transaction_fixture(user, account, %{
+          normalized_merchant: "Netflix",
+          category: nil
+        })
+
+      category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
+
+      assert {:ok, 1} = Finance.recategorize_transactions(user)
+      assert Repo.reload!(txn).category == "Subscriptions"
+    end
+
+    test "re-files a transaction whose matching rule's category changed" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      txn =
+        transaction_fixture(user, account, %{
+          normalized_merchant: "Netflix",
+          category: "Entertainment"
+        })
+
+      category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
+
+      assert {:ok, 1} = Finance.recategorize_transactions(user)
+      assert Repo.reload!(txn).category == "Subscriptions"
+    end
+
+    test "leaves an already-correct category untouched and reports 0" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      transaction_fixture(user, account, %{
+        normalized_merchant: "Netflix",
+        category: "Subscriptions"
+      })
+
+      category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
+
+      assert {:ok, 0} = Finance.recategorize_transactions(user)
+    end
+
+    test "clears a category whose rule was the only one and no longer matches" do
+      user = user_fixture()
+      account = account_fixture(%{}, user)
+
+      txn =
+        transaction_fixture(user, account, %{
+          normalized_merchant: "Old Merchant",
+          category: "Shopping"
+        })
+
+      # No rules at all now — "Old Merchant" doesn't match anything.
+      assert {:ok, 1} = Finance.recategorize_transactions(user)
+      assert Repo.reload!(txn).category == nil
+    end
+
+    test "covers every account the user has, not just one" do
+      user = user_fixture()
+      account_a = account_fixture(%{name: "Checking"}, user)
+      account_b = account_fixture(%{name: "Savings"}, user)
+
+      txn_a =
+        transaction_fixture(user, account_a, %{normalized_merchant: "Netflix", category: nil})
+
+      txn_b =
+        transaction_fixture(user, account_b, %{normalized_merchant: "Netflix", category: nil})
+
+      category_rule_fixture(user, %{match_text: "netflix", category: "Subscriptions"})
+
+      assert {:ok, 2} = Finance.recategorize_transactions(user)
+      assert Repo.reload!(txn_a).category == "Subscriptions"
+      assert Repo.reload!(txn_b).category == "Subscriptions"
+    end
+
+    test "never touches another user's transactions" do
+      owner = user_fixture()
+      stranger = user_fixture()
+      owner_account = account_fixture(%{}, owner)
+
+      theirs =
+        transaction_fixture(owner, owner_account, %{
+          normalized_merchant: "Netflix",
+          category: nil
+        })
+
+      category_rule_fixture(stranger, %{match_text: "netflix", category: "Subscriptions"})
+
+      assert {:ok, 0} = Finance.recategorize_transactions(stranger)
+      assert Repo.reload!(theirs).category == nil
+    end
+  end
+
   describe "Transaction.fingerprint/3" do
     test "is deterministic for the same inputs" do
       a = Transaction.fingerprint(~D[2026-01-15], -450, "Coffee Shop")
