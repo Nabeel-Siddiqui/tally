@@ -22,6 +22,55 @@ defmodule Tally.FinanceTest do
       assert account.user_id == user.id
     end
 
+    test "defaults the opening balance to 0 when not given", %{user: user} do
+      assert {:ok, account} = Finance.create_account(user, %{name: "Checking", type: :checking})
+      assert account.opening_balance_cents == 0
+    end
+
+    test "parses a dollar-string opening balance into cents", %{user: user} do
+      assert {:ok, account} =
+               Finance.create_account(user, %{
+                 name: "Checking",
+                 type: :checking,
+                 opening_balance: "1500.00"
+               })
+
+      assert account.opening_balance_cents == 150_000
+    end
+
+    test "parses a negative opening balance", %{user: user} do
+      assert {:ok, account} =
+               Finance.create_account(user, %{
+                 name: "Credit card",
+                 type: :credit_card,
+                 opening_balance: "-200.00"
+               })
+
+      assert account.opening_balance_cents == -20_000
+    end
+
+    test "a blank opening balance defaults to 0, same as not given", %{user: user} do
+      assert {:ok, account} =
+               Finance.create_account(user, %{
+                 name: "Checking",
+                 type: :checking,
+                 opening_balance: ""
+               })
+
+      assert account.opening_balance_cents == 0
+    end
+
+    test "rejects a malformed opening balance", %{user: user} do
+      assert {:error, changeset} =
+               Finance.create_account(user, %{
+                 name: "Checking",
+                 type: :checking,
+                 opening_balance: "not a number"
+               })
+
+      assert "must be a decimal like 1500.00 or -200.00" in errors_on(changeset).opening_balance
+    end
+
     test "requires a name and a type", %{user: user} do
       assert {:error, changeset} = Finance.create_account(user, %{})
       assert "can't be blank" in errors_on(changeset).name
@@ -420,8 +469,21 @@ defmodule Tally.FinanceTest do
       assert Finance.account_balance(account) == 550
     end
 
-    test "is 0 for an account with no transactions", %{account: account} do
+    test "is 0 for an account with no transactions and no opening balance", %{account: account} do
       assert Finance.account_balance(account) == 0
+    end
+
+    test "includes the opening balance", %{user: user} do
+      {:ok, account} =
+        Finance.create_account(user, %{
+          name: "Checking",
+          type: :checking,
+          opening_balance: "1000.00"
+        })
+
+      _spend = transaction_fixture(user, account, %{description: "Coffee", amount_cents: -450})
+
+      assert Finance.account_balance(account) == 100_000 - 450
     end
   end
 

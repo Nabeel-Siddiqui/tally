@@ -19,9 +19,9 @@ defmodule Tally.Finance.Importer do
 
   alias Tally.Finance.{CategoryRule, Transaction}
   alias Tally.Finance.Importer.Parser
+  alias Tally.Money
 
   @required_columns ~w(date description amount)
-  @amount_pattern ~r/^(-?)\$?([\d,]+)\.(\d{2})$/
 
   @type row_error :: %{row: pos_integer(), reason: String.t()}
   @type result :: %{
@@ -125,14 +125,9 @@ defmodule Tally.Finance.Importer do
   defp fetch_description(_), do: {:error, "missing description"}
 
   defp fetch_amount(value) when is_binary(value) do
-    case Regex.run(@amount_pattern, String.trim(value)) do
-      [_, sign, dollars, cents] ->
-        whole = dollars |> String.replace(",", "") |> String.to_integer()
-        amount_cents = whole * 100 + String.to_integer(cents)
-        {:ok, if(sign == "-", do: -amount_cents, else: amount_cents)}
-
-      nil ->
-        {:error, "invalid amount #{inspect(value)}, expected a decimal like -4.50"}
+    case Money.parse_cents(value) do
+      {:ok, cents} -> {:ok, cents}
+      :error -> {:error, "invalid amount #{inspect(value)}, expected a decimal like -4.50"}
     end
   end
 

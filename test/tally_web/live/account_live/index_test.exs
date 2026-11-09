@@ -49,6 +49,42 @@ defmodule TallyWeb.AccountLive.IndexTest do
       assert render(view) =~ "Credit Card"
     end
 
+    test "creates an account with an opening balance, reflected in its displayed balance", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/accounts")
+
+      view
+      |> element(~s|a[href="#{~p"/accounts/new"}"]|)
+      |> render_click()
+
+      assert_patch(view, ~p"/accounts/new")
+
+      view
+      |> form("#account-form",
+        account: %{name: "Savings", type: "checking", opening_balance: "1000.00"}
+      )
+      |> render_submit()
+
+      assert_patch(view, ~p"/accounts")
+      html = render(view)
+      assert html =~ "Savings"
+      assert html =~ "$1,000.00"
+    end
+
+    test "rejects a malformed opening balance", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/accounts/new")
+
+      html =
+        view
+        |> form("#account-form",
+          account: %{name: "Checking", type: "checking", opening_balance: "nope"}
+        )
+        |> render_submit()
+
+      assert html =~ "must be a decimal like 1500.00 or -200.00"
+    end
+
     test "rejects an account with no name or type", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/accounts/new")
 

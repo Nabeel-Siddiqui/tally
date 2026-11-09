@@ -22,6 +22,11 @@ only where this app actually needs it, not speculatively.
   `amount_cents` field is a plain integer; formatting as dollars-and-cents
   for display happens only at the presentation boundary, never in storage
   or in arithmetic.
+- **`Tally.Money.parse_cents/1` is the one place a dollar string gets
+  turned into cents** (CSV import, an account's opening balance), and
+  `TallyWeb.Money.format/1` is the one place cents gets turned back into
+  a dollar string for display. Don't write a third place that does
+  either.
 
 ## Function contracts
 

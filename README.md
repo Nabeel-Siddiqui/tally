@@ -14,7 +14,9 @@ skills.
 ## What it does
 
 - Track several accounts (checking, credit card), each with a running
-  balance computed from its transactions.
+  balance computed from its transactions — plus an optional opening
+  balance, for an account you're starting to track mid-history rather
+  than from its very first transaction.
 - Import a bank statement CSV. Re-uploading an overlapping statement is
   safe: transactions already on the account are skipped, not duplicated.
 - Bad rows don't sink the import. Each malformed row is reported with its
@@ -82,7 +84,7 @@ first load.
 To check the whole thing end to end:
 
 ```bash
-mix test                # 236 tests, no network calls
+mix test                # 252 tests, no network calls
 mix credo --strict
 mix dialyzer
 ```
@@ -103,9 +105,9 @@ for spending.
 
 ## What I'd do next
 
-- **Starting balances.** Balances are the sum of imported transactions, so
-  they're only as complete as the history uploaded. An opening-balance
-  field per account would fix that.
+- **Editing an opening balance after creation.** It's set once, at
+  account creation, and there's no edit form yet — a reasonable next
+  step once there's a real edit flow for accounts at all.
 - **Smarter column detection.** Real bank exports vary a lot. Detecting
   common layouts (or letting the user map columns once per account) would
   remove the fixed-format requirement.

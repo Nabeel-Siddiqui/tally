@@ -25,6 +25,12 @@ defmodule TallyWeb.AccountLive.FormComponent do
           prompt="Choose a type"
           options={[{"Checking", :checking}, {"Credit card", :credit_card}]}
         />
+        <.input
+          field={@form[:opening_balance]}
+          type="text"
+          label="Opening balance"
+          placeholder="0.00"
+        />
         <:actions>
           <.button phx-disable-with="Saving...">Save account</.button>
         </:actions>

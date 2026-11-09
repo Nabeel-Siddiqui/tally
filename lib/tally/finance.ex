@@ -223,18 +223,21 @@ defmodule Tally.Finance do
   end
 
   @doc """
-  `account`'s running balance: the sum of every transaction posted to
-  it. There's no separate "opening balance" concept — this is exactly
-  as accurate as the transaction history imported so far, which is a
-  known simplification (see the README).
+  `account`'s running balance: its opening balance plus the sum of
+  every transaction posted to it. For an account with no opening
+  balance set (the default), this is exactly the sum of its imported
+  transactions, same as before opening balances existed.
   """
   @spec account_balance(Account.t()) :: integer()
   def account_balance(%Account{} = account) do
-    Transaction
-    |> where([t], t.account_id == ^account.id)
-    |> select([t], sum(t.amount_cents))
-    |> Repo.one()
-    |> Kernel.||(0)
+    transactions_total =
+      Transaction
+      |> where([t], t.account_id == ^account.id)
+      |> select([t], sum(t.amount_cents))
+      |> Repo.one()
+      |> Kernel.||(0)
+
+    account.opening_balance_cents + transactions_total
   end
 
   @doc """
